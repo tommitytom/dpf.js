@@ -1,0 +1,23 @@
+{
+  "name": "dpf.js",
+  "version": "0.1.0",
+  "description": "Generic DPF + LVGL + txiki/QuickJS + rpcpp framework. Shipped as an npm source package; consumed via require.resolve + add_subdirectory.",
+  "license": "ISC",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "runtime/",
+    "examples/",
+    "deps/",
+    "CMakeLists.txt",
+    "lv_conf.h",
+    "tsconfig.base.json",
+    "README.md"
+  ],
+  "devDependencies": {
+    "esbuild": "^0.28"
+  }
+}

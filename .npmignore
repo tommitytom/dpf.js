@@ -1,0 +1,6 @@
+# Submodules are flattened to source at pack time — never ship pointer files.
+**/.gitmodules
+.gitmodules
+# Per-consumer / derived; never shipped.
+build/
+node_modules/

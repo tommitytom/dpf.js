@@ -1,0 +1,7 @@
+# Derived / build artifacts
+/build/
+node_modules/
+*.o
+*.a
+*.tgz
+.DS_Store
