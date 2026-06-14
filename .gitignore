@@ -5,3 +5,4 @@ node_modules/
 *.a
 *.tgz
 .DS_Store
+todo.md
