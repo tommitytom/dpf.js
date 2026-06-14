@@ -24,9 +24,9 @@ add_subdirectory("${DPFJS_PATH}" dpfjs)
   txiki host (`host/TjsHostRuntime`), the `JsRpcBridge<Service>` template, and
   the DPF-free `PluginDescriptor` / `Env` helpers.
 - `runtime/lvgljs/` — the generic TypeScript front door to the native bridge
-  (parameter API, input handling, React hook glue).
+  (parameter API, focus groups, the on/off event bus, React hook glue).
 - `deps/` — the framework's own submodules: DPF, DPF-Widgets, lv_binding_js
-  (LVGL + txiki/QuickJS), rpcpp (reflect-cpp), msgpack-c, efsw.
+  (LVGL + txiki/QuickJS), rpcpp (reflect-cpp), msgpack-c.
 - `examples/minimal/` — a compile-only seam probe that instantiates the
   framework against a trivial service with no consumer coupling.
 

@@ -52,12 +52,6 @@ set_target_properties(msgpack-c PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set(RPCPP_BUILD_MSGPACK ON CACHE BOOL "" FORCE)
 add_subdirectory(deps/rpcpp)
 
-# --- efsw: cross-platform file watcher (inotify / FSEvents / Win32). Built as a
-# single static lib; the duplicate efsw-static target is suppressed.
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build efsw as static" FORCE)
-set(BUILD_STATIC_LIBS OFF CACHE BOOL "Skip duplicate efsw-static target" FORCE)
-add_subdirectory(deps/efsw EXCLUDE_FROM_ALL)
-
 # --- lvgl-js-native: the native C++ component bridge (lv_binding_js wrappers +
 # the dpf.js LVGL+JS engine + the generic embedded txiki host).
 set(LVGL_JS_NATIVE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/deps/lv_binding_js/src/render/native)
@@ -159,7 +153,6 @@ set_target_properties(mbedcrypto PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(ada PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(miniz PROPERTIES POSITION_INDEPENDENT_CODE ON)
 set_target_properties(reflectcpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
-set_target_properties(efsw PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # --- dpfjs::core: the single INTERFACE target a consumer links. Carries the
 # framework's PUBLIC include dirs + link libraries; the generated version header
@@ -175,7 +168,7 @@ target_include_directories(dpfjs-core INTERFACE
     ${CMAKE_CURRENT_BINARY_DIR}            # dpf_js_version.h
 )
 target_link_libraries(dpfjs-core INTERFACE
-    lvgl-js-native lvgl::lvgl tjs rpcpp efsw miniz
+    lvgl-js-native lvgl::lvgl tjs rpcpp miniz
 )
 
 # --- Optional compile-only seam probe: proves src/dpfjs builds against a
