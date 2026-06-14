@@ -26,12 +26,13 @@ extern "C" {
 // the host needs only txiki + the standard library.
 class TjsHostRuntime {
 public:
-    // The sync dispatch the __rpcSend trampoline forwards to: msgpack request
-    // bytes -> optional msgpack reply (nullopt = no reply / a notification).
-    // The reply matches rpcpp's TypedRpcServer::processMessage output (the
-    // codec's byte buffer). The request is a string_view (C++17, not C++20
-    // std::span) so this header stays includable by the C++17 plugin engine.
-    using RpcSendFn = std::function<std::optional<std::vector<char>>(std::string_view)>;
+    // The sync dispatch the __rpcSend trampoline forwards to: a request JSValue
+    // -> a response JSValue (JS_NULL = no reply / a notification). The bridge
+    // marshals C++ <-> JSValue directly in-process (rpcpp's QuickJS codec), so
+    // nothing is serialized. The host stays rpcpp-free and C++17 — it only moves
+    // opaque JSValues, never rpcpp types. The returned JSValue is owned (handed
+    // straight back to the JS caller).
+    using RpcSendFn = std::function<JSValue(JSContext*, JSValueConst)>;
 
     TjsHostRuntime() = default;
     ~TjsHostRuntime();
@@ -61,11 +62,12 @@ public:
     int evalModuleBytecode(const std::uint8_t* bytecode, std::size_t len);
     int evalString(const char* code);
 
-    // Bind a generic `__rpcSend(bytes) -> ArrayBuffer | null` on `ns`,
-    // dispatching to `fn`. The callable is captured in the JS function's data
-    // (no process global), so multiple hosts can coexist in one process — e.g.
-    // several plugin windows. `fn` is owned by the host and outlives the JS
-    // function (shutdown frees the runtime before the bindings).
+    // Bind a generic `__rpcSend(request) -> response | null` on `ns`,
+    // dispatching the request object to `fn` and returning its response object.
+    // The callable is captured in the JS function's data (no process global), so
+    // multiple hosts can coexist in one process — e.g. several plugin windows.
+    // `fn` is owned by the host and outlives the JS function (shutdown frees the
+    // runtime before the bindings).
     void bindRpcSend(JSValue ns, RpcSendFn fn);
 
 private:

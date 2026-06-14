@@ -11,8 +11,9 @@
 #include "LvglJsEngine.hpp"
 #include "RpcEnvelope.h"
 #include "TypedRpcServer.h"
-#include "codecs/MsgpackCodec.h"
-#include "transports/QueueTransport.h"
+#include "codecs/QuickJSCodec.h"
+#include "qjs/read.hpp"
+#include "transports/QuickJSTransport.h"
 
 extern "C" {
     #include <quickjs.h>
@@ -32,20 +33,28 @@ namespace dpfjs {
 // `writeNotification<T>` are concrete-Service members. Keeping the server
 // concrete here means the domain bridge calls writeNotification directly (no
 // indirection) and __rpcSend has no vcall.
-template <class Service, class Codec = rpcpp::MsgpackCodec>
+template <class Service>
 class JsRpcBridge {
 public:
-    using RpcTransport = rpcpp::QueueTransport<Codec>;
-    using RpcServer    = rpcpp::TypedRpcServer<Service, Codec>;
+    using RpcTransport = rpcpp::QuickJSTransport;
+    using RpcServer    = rpcpp::TypedRpcServer<Service, rpcpp::QuickJSCodec>;
 
     JsRpcBridge(LvglJsEngine& engine, Service& service, const char* namespaceSymbol)
         : engine_(engine) {
-        // transport must outlive server (member order below).
-        transport_ = std::make_unique<RpcTransport>();
-        server_    = std::make_unique<RpcServer>(service, *transport_);
-
+        // The QuickJS bridge marshals directly against a live context, so unlike
+        // a byte codec it cannot be built before the engine has one. Construct
+        // the context first and bail if absent (real consumers init the engine
+        // before wiring a bridge).
         JSContext* ctx = engine_.getContext();
         if (!ctx) return;
+
+        // transport must outlive server (member order below). The transport's
+        // delivery callback fires on the JS thread (from pumpAsync -> drain) and
+        // forwards each materialized async/notification response object to JS.
+        transport_ = std::make_unique<RpcTransport>(ctx,
+            [this](JSContext*, JSValue v) { engine_.emit("rpc-message", 1, &v); });
+        server_    = std::make_unique<RpcServer>(service, *transport_,
+                                                 rpcpp::QuickJSCodec{ctx});
 
         JSValue global = JS_GetGlobalObject(ctx);
         JSValue sym    = JS_NewSymbol(ctx, namespaceSymbol, /*is_global*/ true);
@@ -61,18 +70,22 @@ public:
         // null id (every notification reply), so without this a typed-handler
         // exception in C++ would read as "nothing happened" on the UI side.
         engine_.host().bindRpcSend(ns,
-            [this](std::string_view bytes) -> std::optional<std::vector<char>> {
-                auto reply = server_->processMessage(
-                    std::span<const char>(bytes.data(), bytes.size()));
-                if (reply) {
-                    if (auto err = Codec::template read<rpcpp::RpcError>(
-                            std::span<const char>{reply->data(), reply->size()});
-                        err) {
-                        std::fprintf(stderr, "[rpc] error %d: %s\n",
-                                     err->error.code, err->error.message.c_str());
-                    }
+            [this](JSContext* sctx, JSValueConst req) -> JSValue {
+                auto out = server_->processMessage(req);
+                if (!out) return JS_NULL;             // notification / no reply
+                // Materialize the response on the JS thread (sync path).
+                JSValue resp = out->materialize(sctx);
+                // Echo server-side error envelopes to stderr — the JS client
+                // drops error replies (null id), so without this a typed-handler
+                // exception in C++ reads as "nothing happened" on the UI side.
+                // read() borrows resp; a success reply has no `error` field, so
+                // the read fails and we skip logging.
+                if (auto err = rpcpp::qjs::read<rpcpp::RpcError>(sctx, resp);
+                    err && err->error.code) {
+                    std::fprintf(stderr, "[rpc] error %d: %s\n",
+                                 err->error.code, err->error.message.c_str());
                 }
-                return reply;
+                return resp;                          // owned; handed to JS
             });
         JS_SetPropertyStr(ctx, ns, "__log",
                           JS_NewCFunction(ctx, js_log, "__log", 2));
@@ -99,17 +112,12 @@ public:
     JSValue       jsNamespace() const { return ns_; }  // borrowed; consumer adds props
 
     // Drain the rpc transport's outgoing queue (async resolver responses +
-    // notification frames) into engine.emit("rpc-message", ArrayBuffer).
+    // notification frames). Each deferred thunk is materialized on the JS thread
+    // into a response object and routed to engine.emit("rpc-message", object) by
+    // the transport's delivery callback. Call from the JS event loop.
     void pumpAsync() {
         if (!transport_) return;
-        JSContext* ctx = engine_.getContext();
-        if (!ctx) return;
-        while (auto frame = transport_->tryReceive()) {
-            JSValue ab = JS_NewArrayBufferCopy(ctx,
-                reinterpret_cast<const std::uint8_t*>(frame->data()), frame->size());
-            engine_.emit("rpc-message", 1, &ab);
-            JS_FreeValue(ctx, ab);
-        }
+        transport_->drain();
     }
 
 private:

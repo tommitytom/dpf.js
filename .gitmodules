@@ -11,7 +11,3 @@
 [submodule "deps/rpcpp"]
 	path = deps/rpcpp
 	url = git@github.com:tommitytom/rpcpp.git
-[submodule "deps/msgpack-c"]
-	path = deps/msgpack-c
-	url = https://github.com/msgpack/msgpack-c.git
-	branch = c_master

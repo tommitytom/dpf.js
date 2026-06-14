@@ -36,20 +36,13 @@ add_subdirectory(deps/lv_binding_js/deps/lvgl)
 set(BUILD_WITH_MIMALLOC OFF CACHE BOOL "" FORCE)
 add_subdirectory(deps/lv_binding_js/deps/txiki EXCLUDE_FROM_ALL)
 
-# --- msgpack-c: C library for the msgpack codec used by rpcpp/reflect-cpp.
-# Vendored + statically linked. Must be added before deps/rpcpp so reflect-cpp's
-# `if (NOT TARGET msgpack-c)` short-circuits its find_package call and links our
-# vendored target instead.
-set(MSGPACK_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
-set(MSGPACK_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(MSGPACK_ENABLE_SHARED  OFF CACHE BOOL "" FORCE)
-set(MSGPACK_ENABLE_STATIC  ON  CACHE BOOL "" FORCE)
-add_subdirectory(deps/msgpack-c EXCLUDE_FROM_ALL)
-# Static lib ends up inside shared plugin .so / .dylib outputs — needs PIC.
-set_target_properties(msgpack-c PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
 # --- rpcpp: header-only JSON-RPC 2.0 server, used by JsRpcBridge ---
-set(RPCPP_BUILD_MSGPACK ON CACHE BOOL "" FORCE)
+# The bridge marshals C++ <-> JSValue in-process via rpcpp's QuickJS codec, so
+# rpcpp needs quickjs.h. txiki already defines the `qjs` target above (the
+# add_subdirectory(...txiki) on line ~37), so rpcpp's
+# `if(RPCPP_BUILD_QUICKJS AND NOT TARGET qjs)` guard skips the CPM fetch and
+# links that existing engine instead of pulling its own.
+set(RPCPP_BUILD_QUICKJS ON CACHE BOOL "" FORCE)
 add_subdirectory(deps/rpcpp)
 
 # --- lvgl-js-native: the native C++ component bridge (lv_binding_js wrappers +

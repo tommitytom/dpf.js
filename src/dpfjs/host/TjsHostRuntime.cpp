@@ -112,10 +112,12 @@ int TjsHostRuntime::evalString(const char* code) {
     return 0;
 }
 
-// __rpcSend(bytes) -> ArrayBuffer | null. Accepts a Uint8Array view or a raw
-// ArrayBuffer; forwards the bytes to the captured RpcSendFn and wraps the reply.
-// The RpcSendFn* is carried in funcData[0] (an ArrayBuffer holding the pointer),
-// so the trampoline needs no global to find its dispatch target.
+// __rpcSend(request) -> response | null. Forwards the request JSValue to the
+// captured RpcSendFn and returns its response JSValue (JS_NULL for a
+// notification / no reply). The RpcSendFn* is carried in funcData[0] (an
+// ArrayBuffer holding the pointer), so the trampoline needs no global to find
+// its dispatch target. The host moves only opaque JSValues — the marshalling
+// to/from C++ types happens inside the dispatch callable (the bridge's codec).
 JSValue TjsHostRuntime::rpcSendThunk(JSContext* ctx, JSValueConst, int argc,
                                      JSValueConst* argv, int, JSValue* funcData) {
     std::size_t holderLen = 0;
@@ -127,28 +129,9 @@ JSValue TjsHostRuntime::rpcSendThunk(JSContext* ctx, JSValueConst, int argc,
     if (!fn || !*fn)
         return JS_ThrowInternalError(ctx, "__rpcSend: dispatch unavailable");
     if (argc < 1)
-        return JS_ThrowTypeError(ctx, "__rpcSend: expected (bytes)");
+        return JS_ThrowTypeError(ctx, "__rpcSend: expected (request)");
 
-    std::size_t byteOffset = 0, byteLength = 0, arrayLen = 0;
-    JSValue ab = JS_GetTypedArrayBuffer(ctx, argv[0], &byteOffset, &byteLength, nullptr);
-    std::uint8_t* data = nullptr;
-    if (!JS_IsException(ab)) {
-        data = JS_GetArrayBuffer(ctx, &arrayLen, ab);
-    } else {
-        JS_FreeValue(ctx, ab);
-        data = JS_GetArrayBuffer(ctx, &arrayLen, argv[0]);
-        byteOffset = 0; byteLength = arrayLen;
-        ab = JS_DupValue(ctx, argv[0]);
-    }
-    if (!data) { JS_FreeValue(ctx, ab); return JS_ThrowTypeError(ctx, "__rpcSend: not bytes"); }
-
-    std::string_view bytes(reinterpret_cast<const char*>(data + byteOffset), byteLength);
-    std::optional<std::vector<char>> reply = (*fn)(bytes);
-    JS_FreeValue(ctx, ab);
-
-    if (!reply) return JS_NULL;
-    return JS_NewArrayBufferCopy(ctx,
-        reinterpret_cast<const std::uint8_t*>(reply->data()), reply->size());
+    return (*fn)(ctx, argv[0]);
 }
 
 void TjsHostRuntime::bindRpcSend(JSValue ns, RpcSendFn fn) {
