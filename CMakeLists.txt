@@ -177,3 +177,17 @@ if(DPFJS_BUILD_EXAMPLE)
         CXX_STANDARD 20
         CXX_STANDARD_REQUIRED ON)
 endif()
+
+# --- Tests: runtime tests for the txiki host + __rpcSend trampoline. These run
+# against TjsHostRuntime alone (links only `tjs`, no LVGL), so they stay light.
+option(DPFJS_BUILD_TESTS "Build dpf.js tests" OFF)
+if(DPFJS_BUILD_TESTS)
+    enable_testing()
+    include(FetchContent)
+    FetchContent_Declare(Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG        v3.9.1)
+    FetchContent_MakeAvailable(Catch2)
+    list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+    add_subdirectory(tests)
+endif()
