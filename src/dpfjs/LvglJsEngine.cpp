@@ -183,6 +183,37 @@ bool LvglJsEngine::init() {
     // Initialize the LVGL window object (root container for JS components)
     WindowInit();
 
+    // Set the cookie-jar path before any fetch fires. txiki.js's libwebsockets
+    // context is created lazily on the first network call and asserts that
+    // cookie_jar_path is non-null. The upstream tjs CLI sets this in its
+    // run-main entry point, which the embedded runtime skips, so mirror the
+    // call here via the internal core binding. Put it in the OS temp dir
+    // (uv_os_tmpdir) so the path is valid on Windows/macOS/Linux, not just /tmp.
+    char tmpdir_buf[1024];
+    size_t tmpdir_len = sizeof(tmpdir_buf);
+    if (uv_os_tmpdir(tmpdir_buf, &tmpdir_len) == 0) {
+        std::string cookie_path(tmpdir_buf, tmpdir_len);
+        cookie_path += "/dpfjs-cookies.txt";
+
+        // Escape for the single-quoted JS string literal below (Windows temp
+        // paths contain backslashes).
+        std::string escaped;
+        for (char c : cookie_path) {
+            if (c == '\\' || c == '\'')
+                escaped += '\\';
+            escaped += c;
+        }
+        std::string init_src =
+            "globalThis[Symbol.for('tjs.internal.core')].setCookieJarPath('" +
+            escaped + "');";
+
+        JSValue cookie_init = JS_Eval(ctx, init_src.c_str(), init_src.size(),
+                                      "<dpfjs-cookie-init>", JS_EVAL_TYPE_GLOBAL);
+        if (JS_IsException(cookie_init))
+            tjs_dump_error(ctx);
+        JS_FreeValue(ctx, cookie_init);
+    }
+
     // Start the prepare/check handles so libuv processes JS jobs
     uv_prepare_start(&qrt->jobs.prepare, [](uv_prepare_t* handle) {
         TJSRuntime* qrt = static_cast<TJSRuntime*>(handle->data);
