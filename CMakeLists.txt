@@ -126,11 +126,27 @@ target_include_directories(lvgl-js-native PUBLIC
 target_link_libraries(lvgl-js-native PUBLIC tjs lvgl::lvgl)
 set_target_properties(lvgl-js-native PROPERTIES
     POSITION_INDEPENDENT_CODE ON
-    # C++17: the shared host (src/dpfjs/host/TjsHostRuntime) uses std::optional /
-    # std::string_view. The lv_binding_js component wrappers compile cleanly
-    # under 17.
-    CXX_STANDARD 17
+    # C++20: the shared host (src/dpfjs/host/TjsHostRuntime) uses std::optional /
+    # std::string_view, and the lv_binding_js component wrappers use designated
+    # initializers. Clang/GCC accept the latter under 17 as an extension, but
+    # MSVC requires 20 — so pin 20 for cross-compiler (Windows) parity.
+    CXX_STANDARD 20
 )
+
+# Windows: <windows.h> (pulled in via libuv → txiki's private.h) #defines GDI
+# names like Arc / Rectangle, which collide with lv_binding_js component classes
+# (class Arc, …) and desync the MSVC parser. NOGDI drops wingdi.h;
+# WIN32_LEAN_AND_MEAN trims winsock1 etc. PUBLIC so the targets that include
+# these component headers (the plugin UI) inherit them. Scoped to this target —
+# NOT global — because WIN32_LEAN_AND_MEAN also drops winioctl.h, which wamr's
+# win_file.c needs. Matches the proven lvgl-template-plugin build.
+if(WIN32)
+    # PRIVATE, not PUBLIC: NOGDI drops wingdi.h, but DPF's UI code (the file-browser
+    # common dialog, DistrhoUIMain) needs GDI types (LOGFONT in commdlg.h). The Arc
+    # collision is only in lv_binding_js's own component sources compiled here, so
+    # scope NOGDI to this target and don't leak it to consumers.
+    target_compile_definitions(lvgl-js-native PRIVATE NOGDI WIN32_LEAN_AND_MEAN)
+endif()
 
 # Ensure all static libs that end up in shared plugin binaries have PIC.
 set_target_properties(lvgl PROPERTIES POSITION_INDEPENDENT_CODE ON)
