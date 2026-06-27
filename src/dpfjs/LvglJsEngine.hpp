@@ -1,5 +1,16 @@
 #pragma once
 
+// txiki's private.h pulls in libwebsockets.h, which under __cplusplus includes
+// <cstddef>/<cstdarg> at namespace scope before opening its own extern "C".
+// Including private.h inside the extern "C" block below would trap those stdlib
+// includes in C linkage — and libc++'s <cstddef> defines std::byte operator
+// templates, which are illegal under extern "C" ("templates must have C++
+// linkage"). Pre-include them here so libwebsockets.h's copies hit the include
+// guards and become no-ops. (Surfaced on macOS/libc++ by the newer upstream
+// libwebsockets, which added the <cstddef> include.)
+#include <cstddef>
+#include <cstdarg>
+
 extern "C" {
     #include "tjs.h"
     #include "private.h"

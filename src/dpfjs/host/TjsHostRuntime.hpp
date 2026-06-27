@@ -1,5 +1,14 @@
 #pragma once
 
+// private.h (below) pulls in libwebsockets.h, which under __cplusplus includes
+// <cstddef>/<cstdarg> at namespace scope before opening its own extern "C".
+// Pre-include them here so those copies hit their include guards and don't land
+// inside the extern "C" block below — libc++'s <cstddef> defines std::byte
+// operator templates, illegal under C linkage ("templates must have C++
+// linkage"). Surfaced on macOS/libc++ by the newer upstream libwebsockets.
+#include <cstddef>
+#include <cstdarg>
+
 extern "C" {
     #include "tjs.h"      // TJS_Initialize / TJS_NewRuntime / TJS_GetJSContext /
                           // TJS_FreeRuntime / TJS_GetLoop (+ <quickjs.h>)
@@ -7,7 +16,6 @@ extern "C" {
                           // tjs__eval_bytecode / tjs_dump_error (+ <uv.h>)
 }
 
-#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
