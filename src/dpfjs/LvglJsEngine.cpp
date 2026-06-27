@@ -183,35 +183,48 @@ bool LvglJsEngine::init() {
     // Initialize the LVGL window object (root container for JS components)
     WindowInit();
 
+    // Browser-compat global aliases. txiki.js historically aliased
+    // window/global/self to globalThis (src/js/polyfills/global.js), but
+    // upstream removed that polyfill — txiki is a server-side runtime. dpf.js
+    // runs a browser-oriented React bundle that expects these globals, so
+    // provide them here, once, before any UI bundle or synthetic 'load' event
+    // is evaluated.
+    {
+        static const char kBrowserGlobals[] =
+            "globalThis.window = globalThis.global = globalThis.self = globalThis;";
+        JSValue r = JS_Eval(ctx, kBrowserGlobals, sizeof(kBrowserGlobals) - 1,
+                            "<dpfjs-globals>", JS_EVAL_TYPE_GLOBAL);
+        if (JS_IsException(r))
+            tjs_dump_error(ctx);
+        JS_FreeValue(ctx, r);
+    }
+
     // Set the cookie-jar path before any fetch fires. txiki.js's libwebsockets
     // context is created lazily on the first network call and asserts that
-    // cookie_jar_path is non-null. The upstream tjs CLI sets this in its
-    // run-main entry point, which the embedded runtime skips, so mirror the
-    // call here via the internal core binding. Put it in the OS temp dir
-    // (uv_os_tmpdir) so the path is valid on Windows/macOS/Linux, not just /tmp.
+    // cookie_jar_path is non-null. The upstream tjs CLI sets this from its
+    // run-main bundle (which can import the internal 'tjs:internal/core'
+    // module); the embedded runtime skips run-main, and that module is not
+    // importable from non-tjs: code, so call setCookieJarPath in C++ directly
+    // on the internal core object (qrt->builtins.internal_core). Put it in the
+    // OS temp dir (uv_os_tmpdir) so the path is valid on Windows/macOS/Linux.
     char tmpdir_buf[1024];
     size_t tmpdir_len = sizeof(tmpdir_buf);
     if (uv_os_tmpdir(tmpdir_buf, &tmpdir_len) == 0) {
         std::string cookie_path(tmpdir_buf, tmpdir_len);
         cookie_path += "/dpfjs-cookies.txt";
 
-        // Escape for the single-quoted JS string literal below (Windows temp
-        // paths contain backslashes).
-        std::string escaped;
-        for (char c : cookie_path) {
-            if (c == '\\' || c == '\'')
-                escaped += '\\';
-            escaped += c;
+        // Borrowed reference owned by the runtime — don't free `core`.
+        JSValue core = qrt->builtins.internal_core;
+        JSValue setFn = JS_GetPropertyStr(ctx, core, "setCookieJarPath");
+        if (JS_IsFunction(ctx, setFn)) {
+            JSValue arg = JS_NewString(ctx, cookie_path.c_str());
+            JSValue ret = JS_Call(ctx, setFn, core, 1, &arg);
+            if (JS_IsException(ret))
+                tjs_dump_error(ctx);
+            JS_FreeValue(ctx, ret);
+            JS_FreeValue(ctx, arg);
         }
-        std::string init_src =
-            "globalThis[Symbol.for('tjs.internal.core')].setCookieJarPath('" +
-            escaped + "');";
-
-        JSValue cookie_init = JS_Eval(ctx, init_src.c_str(), init_src.size(),
-                                      "<dpfjs-cookie-init>", JS_EVAL_TYPE_GLOBAL);
-        if (JS_IsException(cookie_init))
-            tjs_dump_error(ctx);
-        JS_FreeValue(ctx, cookie_init);
+        JS_FreeValue(ctx, setFn);
     }
 
     // Start the prepare/check handles so libuv processes JS jobs

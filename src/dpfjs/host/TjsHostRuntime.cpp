@@ -86,7 +86,10 @@ int TjsHostRuntime::evalModuleBytecode(const std::uint8_t* bytecode, std::size_t
     if (tjs__eval_bytecode(ctx_, bytecode, len, true) != 0)
         return -1;
 
-    static const char kLoadEvent[] = "window.dispatchEvent(new Event('load'));";
+    // Use globalThis rather than `window`: upstream txiki dropped the
+    // window/global/self browser-compat aliases, and the host runtime (CLI)
+    // does not install them. dispatchEvent lives on globalThis either way.
+    static const char kLoadEvent[] = "globalThis.dispatchEvent(new Event('load'));";
     JSValue result = JS_Eval(ctx_, kLoadEvent, sizeof(kLoadEvent) - 1,
                              "<global>", JS_EVAL_TYPE_GLOBAL);
     if (JS_IsException(result)) {
