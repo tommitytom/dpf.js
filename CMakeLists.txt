@@ -25,16 +25,59 @@ configure_file(
 # points it at its own src/lv_conf.h); standalone builds fall back to ours.
 set(LV_BUILD_CONF_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lv_conf.h" CACHE PATH "")
 
+# --- Third-party warning suppression ------------------------------------------
+# LVGL, and the libraries vendored inside txiki (QuickJS, libuv, mbedtls,
+# libwebsockets, …), are upstream code we don't author. A clean build should be
+# warning-free, so we quiet THEM — not our own framework sources (dpf, the
+# lv_binding_js engine) which keep their warnings so regressions stay visible.
+#
+# On MSVC we can't lower the level with /W0 or /w: these deps set their own /W3 /
+# /W4, and a second /W-family flag trips command-line warning D9025 (itself a
+# warning, not /wd-suppressible). Instead disable the specific warning numbers
+# they emit with /wd#### (no /W conflict, survives a later /W4 raise), applied
+# via a CMAKE_C/CXX_FLAGS save/restore wrapper around just those add_subdirectory
+# calls. The list is the full set seen in a clean build; extend if a dep update
+# surfaces a new code.
+if(MSVC)
+    set(DPFJS_DEP_NOWARN
+        /wd4005 /wd4068 /wd4090 /wd4098 /wd4132 /wd4146 /wd4152 /wd4189
+        /wd4244 /wd4245 /wd4267 /wd4334 /wd4661 /wd4668 /wd4700 /wd4701
+        /wd4702 /wd4703 /wd5287 /wd5333)
+else()
+    set(DPFJS_DEP_NOWARN -w)
+endif()
+macro(dpfjs_push_dep_warnings)
+    set(_dpfjs_saved_c "${CMAKE_C_FLAGS}")
+    set(_dpfjs_saved_cxx "${CMAKE_CXX_FLAGS}")
+    string(REPLACE ";" " " _dpfjs_nowarn_str "${DPFJS_DEP_NOWARN}")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${_dpfjs_nowarn_str}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${_dpfjs_nowarn_str}")
+    # Some deps (mbedtls, and concurrentqueue via rpcpp's CPM) still declare a
+    # pre-3.10 cmake_minimum_required → CMake 4.x deprecation warning. The check
+    # reads the CACHE var, so a normal var won't do; pop unsets it.
+    set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+endmacro()
+macro(dpfjs_pop_dep_warnings)
+    set(CMAKE_C_FLAGS "${_dpfjs_saved_c}")
+    set(CMAKE_CXX_FLAGS "${_dpfjs_saved_cxx}")
+    unset(CMAKE_WARN_DEPRECATED CACHE)
+endmacro()
+
 # --- DPF (DISTRHO Plugin Framework): defines dpf_add_plugin() globally, so the
-# consumer can call it after add_subdirectory(dpf.js).
+# consumer can call it after add_subdirectory(dpf.js). NOT wrapped — DPF is a
+# first-party fork; its warnings are fixed at source so they stay visible.
 add_subdirectory(deps/dpf)
 
 # Use LVGL from lv_binding_js (single source of truth)
+dpfjs_push_dep_warnings()
 add_subdirectory(deps/lv_binding_js/deps/lvgl)
+dpfjs_pop_dep_warnings()
 
 # --- txiki.js (QuickJS + libuv + libwebsockets + ffi runtime) ---
 set(BUILD_WITH_MIMALLOC OFF CACHE BOOL "" FORCE)
+dpfjs_push_dep_warnings()
 add_subdirectory(deps/lv_binding_js/deps/txiki EXCLUDE_FROM_ALL)
+dpfjs_pop_dep_warnings()
 
 # --- rpcpp: header-only JSON-RPC 2.0 server, used by JsRpcBridge ---
 # The bridge marshals C++ <-> JSValue in-process via rpcpp's QuickJS codec, so
@@ -43,7 +86,9 @@ add_subdirectory(deps/lv_binding_js/deps/txiki EXCLUDE_FROM_ALL)
 # `if(RPCPP_BUILD_QUICKJS AND NOT TARGET qjs)` guard skips the CPM fetch and
 # links that existing engine instead of pulling its own.
 set(RPCPP_BUILD_QUICKJS ON CACHE BOOL "" FORCE)
+dpfjs_push_dep_warnings()  # silences concurrentqueue's pre-3.10 cmake deprecation
 add_subdirectory(deps/rpcpp)
+dpfjs_pop_dep_warnings()
 
 # --- lvgl-js-native: the native C++ component bridge (lv_binding_js wrappers +
 # the dpf.js LVGL+JS engine + the generic embedded txiki host).
