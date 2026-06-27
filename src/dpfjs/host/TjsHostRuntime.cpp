@@ -26,6 +26,22 @@ bool TjsHostRuntime::init() {
     if (!qrt_)
         return false;
     ctx_ = TJS_GetJSContext(qrt_);
+
+    // Browser-compat global aliases. Upstream txiki.js removed its
+    // src/js/polyfills/global.js (window/global/self -> globalThis) since it is
+    // a server-side runtime. dpf.js hosts browser-oriented JS (React, plus any
+    // code that hooks the synthetic 'load' event via `window.addEventListener`),
+    // so install the aliases on every host right after the context exists,
+    // before any module evaluates. Note: with QuickJS's async ES modules a
+    // missing `window` here surfaces only as a rejected module promise, not a
+    // synchronous error, so a regression would fail silently.
+    static const char kBrowserGlobals[] =
+        "globalThis.window = globalThis.global = globalThis.self = globalThis;";
+    JSValue r = JS_Eval(ctx_, kBrowserGlobals, sizeof(kBrowserGlobals) - 1,
+                        "<dpfjs-globals>", JS_EVAL_TYPE_GLOBAL);
+    if (JS_IsException(r))
+        tjs_dump_error(ctx_);
+    JS_FreeValue(ctx_, r);
     return true;
 }
 

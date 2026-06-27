@@ -183,21 +183,8 @@ bool LvglJsEngine::init() {
     // Initialize the LVGL window object (root container for JS components)
     WindowInit();
 
-    // Browser-compat global aliases. txiki.js historically aliased
-    // window/global/self to globalThis (src/js/polyfills/global.js), but
-    // upstream removed that polyfill — txiki is a server-side runtime. dpf.js
-    // runs a browser-oriented React bundle that expects these globals, so
-    // provide them here, once, before any UI bundle or synthetic 'load' event
-    // is evaluated.
-    {
-        static const char kBrowserGlobals[] =
-            "globalThis.window = globalThis.global = globalThis.self = globalThis;";
-        JSValue r = JS_Eval(ctx, kBrowserGlobals, sizeof(kBrowserGlobals) - 1,
-                            "<dpfjs-globals>", JS_EVAL_TYPE_GLOBAL);
-        if (JS_IsException(r))
-            tjs_dump_error(ctx);
-        JS_FreeValue(ctx, r);
-    }
+    // (window/global/self browser-compat aliases are installed by the shared
+    // TjsHostRuntime::init, which runs before this — see host_.init() above.)
 
     // Set the cookie-jar path before any fetch fires. txiki.js's libwebsockets
     // context is created lazily on the first network call and asserts that
