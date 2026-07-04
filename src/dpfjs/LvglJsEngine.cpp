@@ -19,6 +19,9 @@ TJSRuntime* GetRuntime() {
 
 LvglJsEngine::LvglJsEngine() : lvgljsObj(JS_UNDEFINED) {}
 
+LvglJsEngine::LvglJsEngine(TjsHostRuntime& externalHost)
+    : host_(&externalHost), ownsHost_(false), lvgljsObj(JS_UNDEFINED) {}
+
 LvglJsEngine::~LvglJsEngine() {
     shutdown();
 }
@@ -126,24 +129,45 @@ bool LvglJsEngine::init() {
     if (initialized)
         return true;
 
-    // The embedded txiki/QuickJS runtime is owned by the shared host.
-    if (!host_.init())
+    // The embedded txiki/QuickJS runtime is owned here (fallback) or by the
+    // external host the DSP owns (plugin-lifetime runtime).
+    if (ownsHost_ && !host_->init())
         return false;
 
-    TJSRuntime* qrt = host_.runtime();
-    ctx = host_.context();
+    ctx = host_->context();
+    if (!ctx)
+        return false;
 
-    // Store per-instance data on the LVGL display. This extends
-    // LvBindingJsDisplayData (used by lv_binding_js internally for
-    // GetWindowInstance()) with the TJS runtime pointer.
-    displayData.runtime = qrt;
-    displayData.engine = this;
-    lv_display_set_user_data(lv_display_get_default(), &displayData);
+    // One-time-per-host context bootstrap. Skipped when a prior editor session
+    // on this (persistent) host already installed it.
+    setupHostContextOnce();
 
-    // Set up the lvgljs global symbol and register native LVGL components
+    initialized = true;
+    return true;
+}
+
+// Returns true if it installed the context bootstrap, false if it detected the
+// lvgljs namespace already present (persistent host reused across sessions).
+bool LvglJsEngine::setupHostContextOnce() {
     JSValue global_obj = JS_GetGlobalObject(ctx);
     JSValue render_sym = JS_NewSymbol(ctx, "lvgljs", true);
     JSAtom render_atom = JS_ValueToAtom(ctx, render_sym);
+
+    // If a previous session already built the namespace on this host, reuse it
+    // (so lvglJsNamespace() works this session too) and skip the rest.
+    JSValue existing = JS_GetProperty(ctx, global_obj, render_atom);
+    if (!JS_IsUndefined(existing) && !JS_IsException(existing)) {
+        lvgljsObj = existing;   // owns the reference
+        JS_FreeAtom(ctx, render_atom);
+        JS_FreeValue(ctx, render_sym);
+        JS_FreeValue(ctx, global_obj);
+        return false;
+    }
+    JS_FreeValue(ctx, existing);
+
+    TJSRuntime* qrt = host_->runtime();
+
+    // Set up the lvgljs global symbol and register native LVGL components
     JSValue render = JS_NewObjectProto(ctx, JS_NULL);
 
     JS_DefinePropertyValue(ctx, global_obj, render_atom, render, JS_PROP_C_W_E);
@@ -180,11 +204,8 @@ bool LvglJsEngine::init() {
     JS_FreeValue(ctx, render_sym);
     JS_FreeValue(ctx, global_obj);
 
-    // Initialize the LVGL window object (root container for JS components)
-    WindowInit();
-
     // (window/global/self browser-compat aliases are installed by the shared
-    // TjsHostRuntime::init, which runs before this — see host_.init() above.)
+    // TjsHostRuntime::init, which runs before this — see host_->init() above.)
 
     // Set the cookie-jar path before any fetch fires. txiki.js's libwebsockets
     // context is created lazily on the first network call and asserts that
@@ -232,7 +253,6 @@ bool LvglJsEngine::init() {
     });
     uv_unref(reinterpret_cast<uv_handle_t*>(&qrt->jobs.check));
 
-    initialized = true;
     return true;
 }
 
@@ -240,7 +260,7 @@ void LvglJsEngine::tick() {
     if (!initialized)
         return;
 
-    host_.pump();
+    host_->pump();
 }
 
 void LvglJsEngine::callAppLifecycle(const char* name) {
@@ -278,13 +298,14 @@ void LvglJsEngine::detachDisplay() {
         lv_display_set_user_data(disp, nullptr);
 }
 
-void LvglJsEngine::reattachDisplay() {
+void LvglJsEngine::attachDisplay() {
     if (!initialized)
         return;
 
-    // Re-bind the current default display + rebuild the window root, then
-    // re-mount the (already-evaluated) React bundle onto it.
-    displayData.runtime = host_.runtime();
+    // Bind the current default display + build the window root, then mount the
+    // (already-evaluated) React bundle onto it. Used both for the first editor
+    // session and every reopen — the persistent context/namespace are untouched.
+    displayData.runtime = host_->runtime();
     displayData.engine = this;
     lv_display_set_user_data(lv_display_get_default(), &displayData);
     WindowInit();
@@ -319,32 +340,35 @@ void LvglJsEngine::shutdown() {
     displayData.engine = nullptr;
     displayData.windowInstance = nullptr;
 
-    host_.shutdown();
+    // Only tear down a host we own. An external host is the plugin-lifetime
+    // runtime owned elsewhere (the DSP) and outlives this editor session.
+    if (ownsHost_)
+        host_->shutdown();
     ctx = nullptr;
 }
 
 int LvglJsEngine::evalModule(const char* filename) {
     if (!initialized)
         return -1;
-    return host_.evalModule(filename);
+    return host_->evalModule(filename);
 }
 
 int LvglJsEngine::evalModuleBuffer(const char* code, size_t len, const char* name) {
     if (!initialized)
         return -1;
-    return host_.evalModuleBuffer(code, len, name);
+    return host_->evalModuleBuffer(code, len, name);
 }
 
 int LvglJsEngine::evalModuleBytecode(const uint8_t* bytecode, size_t len) {
     if (!initialized)
         return -1;
-    return host_.evalModuleBytecode(bytecode, len);
+    return host_->evalModuleBytecode(bytecode, len);
 }
 
 int LvglJsEngine::evalString(const char* code) {
     if (!initialized)
         return -1;
-    return host_.evalString(code);
+    return host_->evalString(code);
 }
 
 JSContext* LvglJsEngine::getContext() const {

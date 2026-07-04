@@ -44,9 +44,20 @@ class LvglJsEngine {
 public:
     using ParamWriteCallback = std::function<void(uint32_t index, float value)>;
 
+    // Owns its own txiki host (LV2 / standalone-without-DSP fallback).
     LvglJsEngine();
+    // References an external, already-initialized host owned elsewhere (the
+    // plugin-lifetime runtime the DSP owns). The engine adds only the LVGL
+    // display layer on top and never shuts the host down.
+    explicit LvglJsEngine(TjsHostRuntime& externalHost);
     ~LvglJsEngine();
 
+    // Init the host (only if owned) + the ONE-TIME-per-host context setup: the
+    // lvgljs namespace, native component constructors, the libuv job pump, the
+    // cookie jar. Idempotent per host — a second editor session on the same
+    // persistent host skips the context setup (detected via the lvgljs
+    // namespace already existing). Does NOT bind a display or mount React; call
+    // attachDisplay() for that after the bundle is evaluated.
     bool init();
     void tick();
     void shutdown();
@@ -55,13 +66,13 @@ public:
     // lvgljs namespace, and evaluated bundle survive across these; only the LVGL
     // display binding + the mounted React tree are torn down and rebuilt. Lets
     // the runtime outlive the editor window (open -> close -> reopen) without a
-    // re-eval (which QuickJS module caching would no-op). `detachDisplay` unmounts
-    // the React app (via the bundle's __rp_unmountUI hook) and drops the window
-    // root + display user_data; `reattachDisplay` re-binds the current default
-    // display and re-mounts (via __rp_mountUI). A pump must run between them to
-    // flush LVGL's async deletes.
+    // re-eval (which QuickJS module caching would no-op). `attachDisplay` binds
+    // the current default display, builds the window root, and mounts React (via
+    // the bundle's __rp_mountUI hook); `detachDisplay` unmounts (__rp_unmountUI)
+    // and drops the window root + display user_data. A pump must run between a
+    // detach and the next attach to flush LVGL's async deletes.
+    void attachDisplay();
     void detachDisplay();
-    void reattachDisplay();
     int evalModule(const char* filename);
     int evalModuleBuffer(const char* code, size_t len, const char* name);
     int evalModuleBytecode(const uint8_t* bytecode, size_t len);
@@ -73,9 +84,9 @@ public:
     // attach further native methods without the engine knowing about them.
     JSValue lvglJsNamespace() const;
 
-    // The embedded txiki host. PluginJsBridge uses it to bind the generic
-    // __rpcSend trampoline onto its own "plugin" namespace.
-    TjsHostRuntime& host() { return host_; }
+    // The embedded txiki host (owned or external). PluginJsBridge uses it to
+    // bind the generic __rpcSend trampoline onto its own "plugin" namespace.
+    TjsHostRuntime& host() { return *host_; }
 
     // Fire all handlers registered via lvgljs.on(channel, fn).
     // argv values are not consumed; engine handles refcounting internally.
@@ -105,8 +116,15 @@ private:
     // __rp_unmountUI lifecycle hooks). No-op if absent or not a function.
     void callAppLifecycle(const char* globalName);
 
-    TjsHostRuntime host_;
-    JSContext* ctx = nullptr;  // cached host_.context()
+    // One-time-per-host context setup (lvgljs namespace + native components +
+    // job pump + cookie jar). Returns false if it detects the namespace is
+    // already present (a prior session did it) so the caller can skip.
+    bool setupHostContextOnce();
+
+    TjsHostRuntime  ownedHost_;             // used only when no external host
+    TjsHostRuntime* host_ = &ownedHost_;    // active host (owned or external)
+    bool ownsHost_ = true;
+    JSContext* ctx = nullptr;  // cached host_->context()
     DpfJsDisplayData displayData;
     bool initialized = false;
     JSValue lvgljsObj;  // initialized to JS_UNDEFINED in ctor (not a constexpr in C++)
