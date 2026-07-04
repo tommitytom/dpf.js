@@ -52,6 +52,11 @@ public:
     explicit LvglJsEngine(TjsHostRuntime& externalHost);
     ~LvglJsEngine();
 
+    // Switch to an external host BEFORE init() (equivalent to the external-host
+    // constructor, but usable on a default-constructed value member once the
+    // host pointer becomes known). No effect after init().
+    void useExternalHost(TjsHostRuntime& externalHost);
+
     // Init the host (only if owned) + the ONE-TIME-per-host context setup: the
     // lvgljs namespace, native component constructors, the libuv job pump, the
     // cookie jar. Idempotent per host — a second editor session on the same
@@ -73,6 +78,12 @@ public:
     // detach and the next attach to flush LVGL's async deletes.
     void attachDisplay();
     void detachDisplay();
+
+    // True when THIS init() freshly installed the host context (vs. reusing a
+    // persistent host a prior editor session already set up). The caller uses it
+    // to evaluate the UI bundle exactly once per host — a reused host already
+    // has the bundle (and its __rp_mountUI hook) registered.
+    bool contextFresh() const { return contextFresh_; }
     int evalModule(const char* filename);
     int evalModuleBuffer(const char* code, size_t len, const char* name);
     int evalModuleBytecode(const uint8_t* bytecode, size_t len);
@@ -124,6 +135,7 @@ private:
     TjsHostRuntime  ownedHost_;             // used only when no external host
     TjsHostRuntime* host_ = &ownedHost_;    // active host (owned or external)
     bool ownsHost_ = true;
+    bool contextFresh_ = false;             // this init() installed the context
     JSContext* ctx = nullptr;  // cached host_->context()
     DpfJsDisplayData displayData;
     bool initialized = false;

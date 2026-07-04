@@ -22,6 +22,13 @@ LvglJsEngine::LvglJsEngine() : lvgljsObj(JS_UNDEFINED) {}
 LvglJsEngine::LvglJsEngine(TjsHostRuntime& externalHost)
     : host_(&externalHost), ownsHost_(false), lvgljsObj(JS_UNDEFINED) {}
 
+void LvglJsEngine::useExternalHost(TjsHostRuntime& externalHost) {
+    if (initialized)
+        return;
+    host_ = &externalHost;
+    ownsHost_ = false;
+}
+
 LvglJsEngine::~LvglJsEngine() {
     shutdown();
 }
@@ -139,8 +146,9 @@ bool LvglJsEngine::init() {
         return false;
 
     // One-time-per-host context bootstrap. Skipped when a prior editor session
-    // on this (persistent) host already installed it.
-    setupHostContextOnce();
+    // on this (persistent) host already installed it — contextFresh_ records
+    // which so the caller can evaluate the UI bundle exactly once per host.
+    contextFresh_ = setupHostContextOnce();
 
     initialized = true;
     return true;
