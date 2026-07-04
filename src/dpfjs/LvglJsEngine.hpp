@@ -50,6 +50,18 @@ public:
     bool init();
     void tick();
     void shutdown();
+
+    // Per-editor-session display lifecycle on a persistent runtime. The context,
+    // lvgljs namespace, and evaluated bundle survive across these; only the LVGL
+    // display binding + the mounted React tree are torn down and rebuilt. Lets
+    // the runtime outlive the editor window (open -> close -> reopen) without a
+    // re-eval (which QuickJS module caching would no-op). `detachDisplay` unmounts
+    // the React app (via the bundle's __rp_unmountUI hook) and drops the window
+    // root + display user_data; `reattachDisplay` re-binds the current default
+    // display and re-mounts (via __rp_mountUI). A pump must run between them to
+    // flush LVGL's async deletes.
+    void detachDisplay();
+    void reattachDisplay();
     int evalModule(const char* filename);
     int evalModuleBuffer(const char* code, size_t len, const char* name);
     int evalModuleBytecode(const uint8_t* bytecode, size_t len);
@@ -88,6 +100,10 @@ private:
     static JSValue js_lvgljs_setParameter(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue js_lvgljs_getParameterIndex(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
     static JSValue js_lvgljs_getParameterCount(JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv);
+
+    // Call a zero-arg global function by name (the bundle's __rp_mountUI /
+    // __rp_unmountUI lifecycle hooks). No-op if absent or not a function.
+    void callAppLifecycle(const char* globalName);
 
     TjsHostRuntime host_;
     JSContext* ctx = nullptr;  // cached host_.context()

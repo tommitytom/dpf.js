@@ -243,6 +243,54 @@ void LvglJsEngine::tick() {
     host_.pump();
 }
 
+void LvglJsEngine::callAppLifecycle(const char* name) {
+    if (!ctx)
+        return;
+    JSValue global = JS_GetGlobalObject(ctx);
+    JSValue fn = JS_GetPropertyStr(ctx, global, name);
+    if (JS_IsFunction(ctx, fn)) {
+        JSValue r = JS_Call(ctx, fn, JS_UNDEFINED, 0, nullptr);
+        if (JS_IsException(r))
+            tjs_dump_error(ctx);
+        JS_FreeValue(ctx, r);
+    }
+    JS_FreeValue(ctx, fn);
+    JS_FreeValue(ctx, global);
+}
+
+void LvglJsEngine::detachDisplay() {
+    if (!initialized)
+        return;
+
+    // Unmount the React tree (schedules async LVGL deletes for every widget).
+    callAppLifecycle("__rp_unmountUI");
+
+    // Drop the lv_binding_js window root created by WindowInit(); its React
+    // children were already scheduled for deletion by the unmount above.
+    if (lv_obj_t* win = GetWindowInstance())
+        lv_obj_delete_async(win);
+    displayData.windowInstance = nullptr;
+
+    // Detach from the current default display so a re-attach binds the fresh
+    // one the reopened window brings.
+    lv_display_t* disp = lv_display_get_default();
+    if (disp && lv_display_get_user_data(disp) == &displayData)
+        lv_display_set_user_data(disp, nullptr);
+}
+
+void LvglJsEngine::reattachDisplay() {
+    if (!initialized)
+        return;
+
+    // Re-bind the current default display + rebuild the window root, then
+    // re-mount the (already-evaluated) React bundle onto it.
+    displayData.runtime = host_.runtime();
+    displayData.engine = this;
+    lv_display_set_user_data(lv_display_get_default(), &displayData);
+    WindowInit();
+    callAppLifecycle("__rp_mountUI");
+}
+
 void LvglJsEngine::shutdown() {
     if (!initialized)
         return;
