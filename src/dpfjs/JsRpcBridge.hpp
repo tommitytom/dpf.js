@@ -2,13 +2,14 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
 
-#include "LvglJsEngine.hpp"
+#include "host/TjsHostRuntime.hpp"
 #include "RpcEnvelope.h"
 #include "TypedRpcServer.h"
 #include "codecs/QuickJSCodec.h"
@@ -24,9 +25,15 @@ namespace dpfjs {
 // Generic QuickJS <-> rpcpp bridge for a concrete Service. Owns the rpc
 // server + transport, builds a Symbol.for(<namespace>) JS object with the single
 // sync `__rpcSend` entry (dispatched through the shared txiki host) plus a
-// `__log` stderr shim, and drains async/notification frames to
-// engine.emit("rpc-message"). The consumer registers the service's methods on
+// `__log` stderr shim, and drains async/notification frames to a settable
+// emit sink ("rpc-message"). The consumer registers the service's methods on
 // server() and may attach further native props to jsNamespace().
+//
+// Bound to a bare TjsHostRuntime (not LvglJsEngine) so the bridge can live on
+// the plugin-lifetime host with no LVGL/display dependency — the display side
+// supplies the emit sink when the editor attaches (setEmitSink), and clears it
+// on detach. While detached the async drain simply has nowhere to deliver
+// (nothing pumps it either), which is fine.
 //
 // A template (not a type-erased base) because TypedRpcServer reflects the
 // concrete Service's method set at compile time — `processMessage` and
@@ -39,20 +46,24 @@ public:
     using RpcTransport = rpcpp::QuickJSTransport;
     using RpcServer    = rpcpp::TypedRpcServer<Service, rpcpp::QuickJSCodec>;
 
-    JsRpcBridge(LvglJsEngine& engine, Service& service, const char* namespaceSymbol)
-        : engine_(engine) {
+    // Delivers async/notification frames to JS. Set by the display side on
+    // editor attach (routes to LvglJsEngine::emit), cleared on detach.
+    using EmitFn = std::function<void(const char* channel, int argc, JSValueConst* argv)>;
+
+    JsRpcBridge(TjsHostRuntime& host, Service& service, const char* namespaceSymbol)
+        : host_(host) {
         // The QuickJS bridge marshals directly against a live context, so unlike
-        // a byte codec it cannot be built before the engine has one. Construct
-        // the context first and bail if absent (real consumers init the engine
-        // before wiring a bridge).
-        JSContext* ctx = engine_.getContext();
+        // a byte codec it cannot be built before the host has one. Construct the
+        // context first and bail if absent (real consumers init the host first).
+        JSContext* ctx = host_.context();
         if (!ctx) return;
 
         // transport must outlive server (member order below). The transport's
         // delivery callback fires on the JS thread (from pumpAsync -> drain) and
-        // forwards each materialized async/notification response object to JS.
+        // forwards each materialized async/notification response object through
+        // the current emit sink (nowhere while the editor is detached).
         transport_ = std::make_unique<RpcTransport>(ctx,
-            [this](JSContext*, JSValue v) { engine_.emit("rpc-message", 1, &v); });
+            [this](JSContext*, JSValue v) { if (emit_) emit_("rpc-message", 1, &v); });
         server_    = std::make_unique<RpcServer>(service, *transport_,
                                                  rpcpp::QuickJSCodec{ctx});
 
@@ -69,7 +80,7 @@ public:
         // error envelopes to stderr — the JS client drops error replies with a
         // null id (every notification reply), so without this a typed-handler
         // exception in C++ would read as "nothing happened" on the UI side.
-        engine_.host().bindRpcSend(ns,
+        host_.bindRpcSend(ns,
             [this](JSContext* sctx, JSValueConst req) -> JSValue {
                 auto out = server_->processMessage(req);
                 if (!out) return JS_NULL;             // notification / no reply
@@ -98,7 +109,7 @@ public:
     }
 
     ~JsRpcBridge() {
-        if (JSContext* ctx = engine_.getContext(); ctx && !JS_IsUndefined(ns_)) {
+        if (JSContext* ctx = host_.context(); ctx && !JS_IsUndefined(ns_)) {
             JS_FreeValue(ctx, ns_);
             ns_ = JS_UNDEFINED;
         }
@@ -110,6 +121,10 @@ public:
     RpcServer&    server()      { return *server_; }
     RpcTransport& transport()   { return *transport_; }
     JSValue       jsNamespace() const { return ns_; }  // borrowed; consumer adds props
+
+    // Route async/notification frames to this sink (editor attach), or pass {}
+    // to stop delivering (editor detach).
+    void setEmitSink(EmitFn fn) { emit_ = std::move(fn); }
 
     // Drain the rpc transport's outgoing queue (async resolver responses +
     // notification frames). Each deferred thunk is materialized on the JS thread
@@ -132,8 +147,9 @@ private:
         return JS_UNDEFINED;
     }
 
-    LvglJsEngine& engine_;
-    JSValue       ns_ = JS_UNDEFINED;
+    TjsHostRuntime& host_;
+    EmitFn          emit_;
+    JSValue         ns_ = JS_UNDEFINED;
     std::unique_ptr<RpcTransport> transport_; // before server_
     std::unique_ptr<RpcServer>    server_;
 };
