@@ -5,6 +5,7 @@ extern "C" {
     #include <quickjs.h>
 }
 
+#include "host/ClassIdSpace.hpp"
 #include "native/bootstrap/render_bootstrap.hpp"
 #include "native/components/component.hpp"
 #include "native/core/group/group.hpp"
@@ -180,7 +181,17 @@ bool LvglJsEngine::setupHostContextOnce() {
 
     JS_DefinePropertyValue(ctx, global_obj, render_atom, render, JS_PROP_C_W_E);
 
+    // lv_binding_js registers its native LVGL component classes off process-global
+    // static ids. On any runtime that reused txiki's cached ids (every 2nd+ runtime
+    // in the process) the class-id counter trails class_count, so re-sync it past
+    // whatever is registered right now — immediately before lv_binding_js's first
+    // fresh allocation — so those fresh ids can't collide with a live class. Sync
+    // again after: lv_binding_js reuses its OWN cached ids on a 2nd+ runtime without
+    // advancing the counter, so this keeps any later fresh registrant safe too.
+    JSRuntime* rt = JS_GetRuntime(ctx);
+    dpfjs::syncClassIdAllocator(rt);
     NativeRenderInit(ctx, render);
+    dpfjs::syncClassIdAllocator(rt);
 
     // Generic event mechanism — plugins (or anything else) can hook native
     // events without modifying the engine.

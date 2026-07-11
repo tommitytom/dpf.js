@@ -1,5 +1,7 @@
 #include "TjsHostRuntime.hpp"
 
+#include "ClassIdSpace.hpp"
+
 #include <cstring>
 
 TjsHostRuntime::~TjsHostRuntime() {
@@ -27,28 +29,13 @@ bool TjsHostRuntime::init() {
         return false;
     ctx_ = TJS_GetJSContext(qrt_);
 
-    // Guard against a quickjs-ng class-id hazard when several runtimes live in one process (a DAW hosting
-    // this plugin: it scans an instance — construct + destroy a first runtime — before instantiating the
-    // one it uses). JS_NewClassID caches each class id in a process-global static but allocates from a
-    // PER-RUNTIME counter (rt->js_class_id_alloc); a runtime that REUSES a static id an earlier runtime
-    // already set does NOT advance its own counter. So after txiki registers its native classes here by
-    // reusing those cached ids, this runtime's counter still sits low — and the next library to register a
-    // FRESH class (lv_binding_js, when an editor attaches) is handed an id that collides with a live txiki
-    // class, and its JS_SetClassProto overwrites that class's prototype. The symptom is a native class
-    // silently losing its methods in the second+ instance only: e.g. TextDecoder.prototype.decode goes
-    // missing, the editor's config load throws, React never mounts, and the plugin UI is blank while the
-    // standalone (single runtime) is fine. Advance the counter past txiki's class block once, up front, so
-    // any later fresh allocation lands in a collision-free range. The reserve is a generous upper bound on
-    // the built-in + txiki class count; JS_NewClassID only bumps the counter (no allocation), and the
-    // skipped ids cost nothing until a real class is registered beyond them.
-    {
-        JSRuntime* rt = JS_GetRuntime(ctx_);
-        constexpr int kReservedClassIds = 512;
-        for (int i = 0; i < kReservedClassIds; ++i) {
-            JSClassID scratch = 0;
-            JS_NewClassID(rt, &scratch);
-        }
-    }
+    // Advance this runtime's class-id counter past txiki's just-registered class
+    // block, so a library that later registers FRESH native classes on this runtime
+    // (lv_binding_js, when an editor attaches) can't be handed an id a live txiki
+    // class already owns and clobber its prototype. txiki registered its eager
+    // classes inside TJS_NewRuntime above, so they're visible to the scan here.
+    // See ClassIdSpace.hpp for the quickjs-ng per-runtime-counter hazard this closes.
+    dpfjs::syncClassIdAllocator(JS_GetRuntime(ctx_));
 
     // Browser-compat global aliases. Upstream txiki.js removed its
     // src/js/polyfills/global.js (window/global/self -> globalThis) since it is
