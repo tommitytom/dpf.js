@@ -74,7 +74,10 @@ add_subdirectory(deps/lv_binding_js/deps/lvgl)
 dpfjs_pop_dep_warnings()
 
 # --- txiki.js (QuickJS + libuv + libwebsockets + ffi runtime) ---
-set(BUILD_WITH_MIMALLOC OFF CACHE BOOL "" FORCE)
+# mimalloc ON: backs txiki's JS heap (tjs__malloc) — a measured ~2–5% win on the React/LVGL UI's
+# allocation-heavy remount churn. MI_OVERRIDE stays OFF (txiki default), so it never replaces the
+# global malloc — the DSP path (plain JS_NewRuntime→libc) and a DAW host's allocator are untouched.
+set(BUILD_WITH_MIMALLOC ON CACHE BOOL "" FORCE)
 dpfjs_push_dep_warnings()
 add_subdirectory(deps/lv_binding_js/deps/txiki EXCLUDE_FROM_ALL)
 dpfjs_pop_dep_warnings()
