@@ -155,6 +155,8 @@ add_library(lvgl-js-native STATIC
     ${LVGL_JS_NATIVE_DIR}/components/tabview/tabview_wrap.cpp
     ${LVGL_JS_NATIVE_DIR}/components/gif/gif.cpp
     ${LVGL_JS_NATIVE_DIR}/components/gif/gif_wrap.cpp
+    ${LVGL_JS_NATIVE_DIR}/components/lottie/lottie.cpp
+    ${LVGL_JS_NATIVE_DIR}/components/lottie/lottie_wrap.cpp
     ${LVGL_JS_NATIVE_DIR}/components/mask/mask.cpp
     ${LVGL_JS_NATIVE_DIR}/components/mask/mask_wrap.cpp
     ${LVGL_JS_NATIVE_DIR}/components/window/window.cpp
