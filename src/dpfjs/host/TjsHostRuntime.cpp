@@ -125,6 +125,14 @@ int TjsHostRuntime::evalModuleBytecode(const std::uint8_t* bytecode, std::size_t
     JSValue result = JS_Eval(ctx_, kLoadEvent, sizeof(kLoadEvent) - 1,
                              "<global>", JS_EVAL_TYPE_GLOBAL);
     if (JS_IsException(result)) {
+        // A listener of THIS event that called tjs.exit ended the session: the exception is the exit's uncatchable
+        // marker, which carries the unwinding and is not an error to print (the hook has already recorded the status),
+        // the same case as the check above, one step later.
+        if (TJS_ExitTaken(TJS_GetRuntime(ctx_))) {
+            JS_FreeValue(ctx_, JS_GetException(ctx_));
+            JS_FreeValue(ctx_, result);
+            return 0;
+        }
         tjs_dump_error(ctx_);
         JS_FreeValue(ctx_, result);
         return -1;
