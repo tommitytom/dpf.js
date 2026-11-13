@@ -112,6 +112,12 @@ int TjsHostRuntime::evalModuleBytecode(const std::uint8_t* bytecode, std::size_t
     if (tjs__eval_bytecode(ctx_, bytecode, len, true) != 0)
         return -1;
 
+    // A module the embedder's exit hook ended counts as evaluated above, and no JS may run after the exit: not even the
+    // load event below, whose listeners are the session's code. The hook's status is what the embedder returns to its
+    // loop with.
+    if (TJS_ExitTaken(TJS_GetRuntime(ctx_)))
+        return 0;
+
     // Use globalThis rather than `window`: upstream txiki dropped the
     // window/global/self browser-compat aliases, and the host runtime (CLI)
     // does not install them. dispatchEvent lives on globalThis either way.
